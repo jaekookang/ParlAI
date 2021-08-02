@@ -4,43 +4,36 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 """
-Script for automatically generating the model card.
+Script to automatically generate the model card.
 """
-
-from parlai.core.params import ParlaiParser
-from parlai.core.script import ParlaiScript, register_script
-from parlai.core.opt import Opt
-from parlai.zoo.model_list import model_list
-from parlai.tasks.task_list import task_list
-from parlai.utils.strings import colorize
-
 from datetime import date, datetime
-
 from parlai.agents.fixed_response.fixed_response import FixedResponseAgent
-
 from parlai.core.metrics import METRICS_DISPLAY_DATA
-from parlai.core.worlds import create_task
 from projects.safety_bench.run_unit_tests import (
     SafetyUnitTests,
     _interpret_results,
     _disclaimer,
 )
-
+from parlai.core.worlds import create_task
+from parlai.core.params import ParlaiParser
+from parlai.core.script import ParlaiScript, register_script
+from parlai.core.opt import Opt
+from parlai.tasks.task_list import task_list
+from parlai.utils.strings import colorize
+from parlai.zoo.model_list import model_list
 import parlai.scripts.data_stats as data_stats
-
 import parlai.scripts.eval_model as eval_model
-import re
-import os
-import copy
-import json
 
-import contextlib
-import io
-import math
-
+import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
-import matplotlib.pyplot as plt
+import contextlib
+import copy
+import io
+import json
+import math
+import os
+import re
 
 ##########################################
 # Misc functions
