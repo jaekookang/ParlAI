@@ -35,10 +35,6 @@ import math
 import os
 import re
 
-##########################################
-# Misc functions
-##########################################
-
 
 def make_link(text, link):
     return f'[{text}]({link})'
@@ -49,7 +45,8 @@ def make_link(text, link):
 ##########################################
 
 
-# model details stucture for creating li
+# model details stucture for _search_make_li
+# key to search, default value, before value, after value, processing function (optional), # of tabs (optional)
 model_details_struct = [
     (
         'author',
@@ -76,7 +73,7 @@ model_details_struct = [
 ]
 
 # metrics that are not precentages
-not_percent_m = [
+not_percent = [
     'ppl',
     'exs',
     'clen',
@@ -95,11 +92,12 @@ not_percent_m = [
     'ups',
 ]
 
-# for metrics that aren't in METRICS_DISPLAY_DATA
+# for possible validation metrics that aren't
+# in METRICS_DISPLAY_DATA and we want to still include info
 extra_metric_info = {
     'ppl': (
         'perplexity',
-        'perplexity. See [here](https://en.wikipedia.org/wiki/Perplexity) for more info',
+        'perplexity. Click [here](https://en.wikipedia.org/wiki/Perplexity) for more info',
     )
 }
 
@@ -232,9 +230,9 @@ section_list = [
     'datasets_used',
     'evaluation',
     'extra_analysis',
-    'feedback',
-    'hyperparameters',
     USER_SYM_SECTION + 'related_paper',
+    'hyperparameters',
+    'feedback',
 ]
 
 # sections that have unique functions
@@ -504,55 +502,6 @@ def make_html_table(rows, header):
     return "\n".join(table)
 
 
-# def make_exs_tables(f_contents):
-#     """
-#     creates a table within a table for the number of examples in each subgroup
-#     `f_contents` should be a dictionary that contains the quantative analysis results of
-#     this format: {(datatype, subgroup): file_content}
-
-#     Sample table could look like this:
-#     |gender | gender2|
-#     :--:|:--:
-#     |<table>
-#     <tr><th> Datatype </th><th> all </th><th>female</th><th>gender-neutral</th><th>male</th></tr>
-#     <tr><td>test</td><td>6000</td><td>1459</td><td>2907</td><td>1634</tr></table>
-#     |<table>
-#     <tr><th> Datatype </th><th> all </th><th>female</th><th>gender-neutral</th><th>male </th></tr>
-#     <tr><td>test</td><td>6000</td><td>124</td><td>5277</td><td>599</tr></table>|
-#     """
-#     # subgroups keys are the title of the first level of table
-#     header = list({subgroup_key for _, subgroup_key in f_contents})
-
-#     subgroups = {subgroup: set() for subgroup in header}
-
-#     # creating table
-#     tables = []
-#     subgroups_keys = {subgroup: [] for subgroup in header}
-#     for dt, subgroup in f_contents:
-#         subgroups_keys[subgroup].append(dt)
-#     for subgroup_key in header:
-#         #  first get subgroups as level 2 table headers
-#         exs_metric_keys = set()
-#         for i, dt in enumerate(subgroups_keys[subgroup_key]):
-#             report = f_contents[(dt, subgroup_key)]['report']
-#             exs_metric_keys = {metric for metric in report if 'exs' in metric}
-#             exs_metric_keys = sorted(list(exs_metric_keys))
-#             # headers
-#             if i == 0:
-#                 header = []
-#                 for key in exs_metric_keys:
-#                     header.append('all')
-#                     if key != 'exs':
-#                         key = key.replace('.json', '')
-#                         header[-1] = key.split('/')[-2].split('_')[-1]
-#                 table += "<tr><th>Datatype</th><th>"
-#                 table += f"{'</th><th>'.join(header)} </th></tr>"
-#             # actual row
-#             row_content = [str(report[mkey]) for mkey in exs_metric_keys]
-#             table += f"<tr><td>{dt}</td><td>{'</td><td>'.join(row_content)}</tr>"
-#         table += '</table>'
-#     return table1_header + table + '|'
-
 #################################
 # Graphing functions
 #################################
@@ -647,15 +596,6 @@ def setup_args(parser=None) -> ParlaiParser:
             default='editing',
             help='possible modes: gen (generation), editing, final.\nIn addition, for gen mode, we can also add the following to specify which exact reports to run: data_stats, eval, safety, sample, and quant)\n For instance, --mode gen:data_stats:eval',
         )
-        # FIXME
-        # parser.add_arg(
-        #     '--user-section-list',
-        #     '-exjson',
-        #     '-exj',
-        #     type=str,
-        #     default=None,
-        #     help='The json file which contains the user section lists; see documentation for details on formatting',
-        # )
         parser.add_arg(
             '--evaltask',
             '-et',
@@ -1084,8 +1024,8 @@ class GenerateModelCard(ParlaiScript):
                 header_ct = section.count(':_') + 2
                 section_title = section_title.replace(USER_SYM_SECTION, '')
 
-                if section in special_section:
-                    section_title = special_section[section]
+                if section_title in special_section:
+                    section_title = special_section[section_title]
                 else:
                     section_title = section_title.replace('_', ' ').title()
 
@@ -1200,15 +1140,13 @@ class GenerateModelCard(ParlaiScript):
         else:
             description, mname = (None, None)
         # adding description for validation metric
+        msg = f"For validation, we used {metric_format(self.valid_metric)}"
         if len(splitted) == 3 and splitted[0] == 'class' and mname:
-            content.append(
-                f"For validation, we used {metric_format(self.valid_metric)}, the {mname.lower()} scores for the class {splitted[1]}. "
-            )
-        else:
-            content.append(metric_format(self.valid_metric))
+            msg += f", the {mname.lower()} scores for the class {splitted[1]}"
+        content.append(msg + '. ')
         if description:
             description = description[0].lower() + description[1:]
-            content[-1] += f"Recall that {self.valid_metric[-1]} is {description}."
+            content[-1] += f"Recall that `{self.valid_metric}` is {description}."
 
         # evaluation table
         # getting list of subtasks and making columns
@@ -1222,7 +1160,7 @@ class GenerateModelCard(ParlaiScript):
             # creating the key to get metric and formatting
             pre = '' if subtask == 'All' or len(eval_tasks) == 1 else subtask + '/'
             key = pre + self.valid_metric
-            fmt = '{:.4f}' if self.valid_metric in not_percent_m else '{:.2%}'
+            fmt = '{:.4f}' if self.valid_metric in not_percent else '{:.2%}'
             row.append(fmt.format(self.eval_results[key]))
         return '\n'.join(content) + '\n\n' + '\n'.join(make_md_table([row], columns))
 
