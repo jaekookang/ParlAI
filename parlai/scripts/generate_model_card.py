@@ -4,7 +4,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 """
-Script to automatically generate the model card.
+Script to generate the model card automatically.
 """
 from datetime import date, datetime
 from parlai.agents.fixed_response.fixed_response import FixedResponseAgent
@@ -253,7 +253,7 @@ defined_sections = {
 defaults = {
     "intended_use": "This model is intended for the use of....\t",
     "privacy": "This model has the following privacy concerns....\t",
-    "limitations": "This model has has these limitations:\t",
+    "limitations": "This model has has these limitations: ...\t",
 }
 
 # special sections that either have...
@@ -309,7 +309,12 @@ data_stats_folder = 'data_stats'
 #######################################
 
 
-def make_task_links(task, sep='|'):
+def to_sublink(heading):
+    refine = heading.replace('#', '').strip()
+    return refine.lower().replace(' ', '-')
+
+
+def make_task_links(task, sep=' | '):
     content = []
     if all_tasks.get(task) and all_tasks[task].get('links'):
         content = [make_link(k, v) for k, v in all_tasks[task]['links'].items()]
@@ -574,7 +579,7 @@ def get_heatmap(stats_dfs, title=None, tfsize=16, heatmapkws_user=None, fout=Non
 
 def setup_args(parser=None) -> ParlaiParser:
     if parser is None:
-        parser = ParlaiParser(True, True, 'Automatically make the model card')
+        parser = ParlaiParser(True, True, 'Automatically generate the model card')
         parser.add_arg(
             '--model-type',
             '-mt',
@@ -1035,9 +1040,8 @@ class GenerateModelCard(ParlaiScript):
                     header = '#' * header_ct + ' ' + section_title
                 contents.append(header + '\n\n' + self.section_contents[section])
                 extra_special_print(f'finished appending content for {section}')
-        fix_top = contents[0].replace('#', '').strip().replace(' ', '-').lower()
         # add a back to top at the very end
-        contents.append(f"\n[back-to-top](#{fix_top})\n")
+        contents.append(f"\n[back-to-top](#{to_sublink(contents[0])})\n")
         return contents
 
     def save_model_card(self, model_card_name='model_card.md'):
@@ -1091,16 +1095,19 @@ class GenerateModelCard(ParlaiScript):
 
     def datasets_used(self):
         # info about datasets used
-        msg = f"This model was trained on the datasets below (use the `parlai display_data` commands to show data). Please visit the {make_link('task (dataset) list', 'https://parl.ai/docs/tasks.html')} for more details about the datasets.\n"
+        task_site = 'https://parl.ai/docs/tasks.html'
+        msg = f"This model was trained on the datasets below (use the `parlai display_data` commands to show data). Visit the {make_link('task (dataset) list', task_site)} for more details about the datasets.\n"
         content = [msg]
         tasks = self.train_tasks
         train_list = []
         for task in tasks:
-            # adding the name
-            train_list.append(f"- {taskname(task)}")
+            # adding the name + attempted link
+            tname = taskname(task)
+            tsite = task_site + to_sublink(task)
+            train_list.append(f"- [{tname}]({tsite})")
             # adding link
             links = make_task_links(task)
-            train_list[-1] += f"({links})" if links else ''
+            train_list[-1] += f" ({links})" if links else ''
             # adding description
             if all_tasks.get(task) and all_tasks[task].get('description'):
                 train_list[-1] += f": {all_tasks[task]['description']}"
