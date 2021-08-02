@@ -7,10 +7,6 @@
 Script for automatically generating the model card.
 """
 
-
-# import subprocess
-# from parlai.utils.torch import total_parameters, trainable_parameters
-
 from parlai.core.params import ParlaiParser
 from parlai.core.script import ParlaiScript, register_script
 from parlai.core.opt import Opt
@@ -20,16 +16,15 @@ from parlai.utils.strings import colorize
 
 from datetime import date, datetime
 
-# from collections.abc import Iterable
 from parlai.agents.fixed_response.fixed_response import FixedResponseAgent
 
-# from parlai.core.metrics import METRICS_DISPLAY_DATA
+from parlai.core.metrics import METRICS_DISPLAY_DATA
 from parlai.core.worlds import create_task
-from projects.safety_bench.run_unit_tests import SafetyUnitTests
-
-# _interpret_results,
-# _disclaimer,
-# )
+from projects.safety_bench.run_unit_tests import (
+    SafetyUnitTests,
+    _interpret_results,
+    _disclaimer,
+)
 
 import parlai.scripts.data_stats as data_stats
 
@@ -39,13 +34,13 @@ import os
 import copy
 import json
 
-# import contextlib
-# import io
-# import math
+import contextlib
+import io
+import math
 
-# import pandas as pd
-# import seaborn as sns
-# import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 ##########################################
 # Misc functions
@@ -111,8 +106,20 @@ not_percent_m = [
 extra_metric_info = {
     'ppl': (
         'perplexity',
-        'perplexity. See [here](https://en.wikipedia.org/wiki/Perplexity) for more info.',
+        'perplexity. See [here](https://en.wikipedia.org/wiki/Perplexity) for more info',
     )
+}
+
+# for safety bench section: {filename: (Section title, description)}
+fname_to_info = {
+    'offensive_language_generation_metrics.json': (
+        'Unsafe Generation Test',
+        "For the Unsafe Generation test, we examine how the model responds to various dialogue inputs, representing 4 different settings. We report the percentage of the model's responses that are flagged as unsafe by each of the provided tools",
+    ),
+    'response_to_offensive_language_metrics.json': (
+        'Response to Offensive Language Test',
+        "For the Response to Offensive Language test, we examine how the model responds to a previously constructed set of hateful inputs by Sheng et. al (2021): <https://arxiv.org/abs/2104.08728>. We attempt to ascertain whether the model's response affirms the hateful input by measuring the percentage of responses that (1) do not contain negations (2) are flagged as offensive by a safety classifier that uses context, and (3) has positive sentiment.",
+    ),
 }
 
 # used later to access the other keys
@@ -234,6 +241,7 @@ section_list = [
     'extra_analysis',
     'feedback',
     'hyperparameters',
+    USER_SYM_SECTION + 'related_paper',
 ]
 
 # sections that have unique functions
@@ -248,6 +256,13 @@ defined_sections = {
     'safety_benchmark',
     'feedback',
     'hyperparameters',
+}
+
+# default messages for certain sections
+defaults = {
+    "intended_use": "This model is intended for the use of....\t",
+    "privacy": "This model has the following privacy concerns....\t",
+    "limitations": "This model has has these limitations:\t",
 }
 
 # special sections that either have...
@@ -271,16 +286,9 @@ M_edit = 'editing'
 M_final = 'final'
 
 # dictionary of all models with their path as the key
-all_model_dicts = {model['path']: model for model in model_list}
+all_models = {model['path']: model for model in model_list}
 # dictionary of all tasks with their task field as the key
-all_task_dicts = {task['task']: task for task in task_list}
-
-
-# default messages for certain sections
-default = {
-    "intended_use": "This model is intended for the use of....",
-    "privacy": "This model has the following privacy concerns....",
-}
+all_tasks = {task['task']: task for task in task_list}
 
 # set containing internal tasks where we can just remove "internal:" and it will be okay
 internal_remove_tasks = {
@@ -310,14 +318,34 @@ data_stats_folder = 'data_stats'
 #######################################
 
 
+def make_task_links(task, sep='|'):
+    content = []
+    if all_tasks.get(task) and all_tasks[task].get('links'):
+        content = [make_link(k, v) for k, v in all_tasks[task]['links'].items()]
+    return sep.join(content)
+
+
+def get_safety_mgs(func, sep='\n\n'):
+    # capture output from the function that prints
+    f = io.StringIO()
+    with contextlib.redirect_stdout(f):
+        func()
+    out = f.getvalue()
+    # remove any colors for command-line
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    tmp = ansi_escape.sub('', out)
+    return list(filter(None, tmp.split(sep)))
+
+
 def create_dropdown(title, dropdown_list):
     newline = '\n'
     return f"<details> {newline} <summary> {title} </summary>{newline} <br>{newline}{newline}{newline.join(dropdown_list)}{newline}</details>"
 
 
-def taskname(task, task_dict):
+def taskname(task):
+    task_dict = all_tasks.get(task)
     if task_dict:
-        return task_dict.get('task')
+        return task_dict.get('display_name')
     task = task.replace('_', ' ')
     task_splitted = task.split(':')
     if len(task_splitted) == 2:
@@ -364,7 +392,7 @@ def possible_and_statement(lis):
     return ', '.join(lis[:-1]) + ', and ' + lis[-1]
 
 
-def create_warning(missing, line_width=150):
+def create_warning(missing):
     return "> :warning: " + missing + ":warning:"
 
 
@@ -401,36 +429,55 @@ def get_saving_err_msg(task, operation, command, e):
     return f'Unfortunately, {operation} for {task} was not successful.\nPlease try running it yourself and debugging.\nEquivalent command tried is\n{command}\n\nError Message:\n{e}\n'
 
 
-# def process_metrics(report):
-#     '''
-#     processes a dictionary of metrics for quantitative analysis
-#     so that only the type and gender-neutral is left and r-eplaces general
-#     with all
-#     '''
-#     new_report = {}
-#     for metric in report:
-#         splitted = metric.split('/')
-#         if len(splitted) == 1:
-#             new_report[]
+def make_img_links(img_list, height='500px', width=None):
+    """
+    given the image link list, converts it into markdown.
+    """
+    contents = []
+    for img_link in img_list:
+        if width is not None:
+            contents.append(f'<img src="{img_link}" width="{width}"></img>')
+        else:
+            contents.append(f'<img src="{img_link}" height="{height}"></img>')
+    return '\n'.join(contents)
 
 
 #################################
 # Table-Related Functions
 #################################
-def make_data_row(task, tname, stats, metrics, suffixes):
-    row = [tname]
+def make_data_row(task, stats, metrics, prefix):
+    """
+    a row for the datasets_used section.
+    """
+    row = [taskname(task)]
     for metric in metrics:
-        curr_suf = suffixes
-        if metric == 'utterances':
-            curr_suf = [suffixes[0]]
-        for suffix in curr_suf:
-            key = suffix + '/' + metric.replace(' ', '_')
-            item = stats.get(key, 'n/a')
-            if isinstance(item, float):
-                item = '{:.3f}'.format(item)
-            row.append(str(item))
+        key = prefix + '/' + metric.replace(' ', '_')
+        item = stats.get(key, 'n/a')
+        if isinstance(item, float):
+            item = '{:.3f}'.format(item)
+        row.append(str(item))
     row.append(f'`parlai dd -t {task} --dt train`')
     return row
+
+
+def datasets_table(train_tasks, metrics, prefix, fts):
+    '''
+    making the table in datasets_used section
+    note: metrics should be w/o '_'
+    '''
+    train_tasks = sorted(train_tasks)
+    rows, missing_datasets = ([], [])
+    for task in train_tasks:
+        try:
+            fname = get_dstats_fname(fts, task)
+            with open(fname, 'r') as f:
+                stats = json.load(f)
+            rows.append(make_data_row(task, stats, metrics, prefix))
+        except Exception:
+            missing_datasets.append(f'`{task}`')
+    columns = ['Dataset'] + metrics + ['Display Dataset Command']
+    table = '\n'.join(make_md_table(rows, columns))
+    return table, missing_datasets
 
 
 def make_table_header(table_header, align=None, extra='|'):
@@ -512,6 +559,71 @@ def make_html_table(rows, header):
 #             table += f"<tr><td>{dt}</td><td>{'</td><td>'.join(row_content)}</tr>"
 #         table += '</table>'
 #     return table1_header + table + '|'
+
+#################################
+# Graphing functions
+#################################
+
+
+def get_heatmap(stats_dfs, title=None, tfsize=16, heatmapkws_user=None, fout=None):
+    # get vmax and vmin and step
+    tmp_max = max([df.max().max() for df in stats_dfs])
+    tmp_min = min([df.min().min() for df in stats_dfs])
+    step = 5 if (tmp_max - tmp_min) < 0.5 else 10
+    vmax = step * math.ceil(tmp_max * 100 / step) / 100
+    vmin = step * math.floor(tmp_min * 100 / step) / 100
+    # create dictionary for heatmap args and update any args passed by user
+    cmap = sns.color_palette("Oranges", as_cmap=True)
+    heatmapkws = {
+        'vmin': vmin,
+        'vmax': vmax,
+        'annot': True,
+        'linecolor': 'black',
+        'cmap': cmap,
+        'linewidths': 0.75,
+        'fmt': ".2%",
+    }
+    if heatmapkws_user:
+        heatmapkws.update(heatmapkws_user)
+
+    # create subplots
+    ratios = [df.shape[0] for df in stats_dfs]
+    N = len(stats_dfs)
+    fig, axs = plt.subplots(nrows=N, gridspec_kw={'height_ratios': ratios}, sharex=True)
+
+    # add color bar (with the last subplot)
+    # left, bot, width, height
+    cbar_ax = fig.add_axes([0.99, 0.15, 0.03, 0.7])
+    for i, df in enumerate(stats_dfs):
+        ax = sns.heatmap(
+            df,
+            ax=axs[i],
+            xticklabels=i == (N - 1),
+            **heatmapkws,
+            cbar=i == (N - 1),
+            cbar_ax=None if i != (N - 1) else cbar_ax,
+        )
+        # remove bottom ticks, set the borders
+        ax.tick_params(bottom=False)
+        ax.patch.set_edgecolor('black')
+        ax.patch.set_linewidth('1')
+        # to be safe, make sure y-axis is in the right direction
+        _ = ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
+        if i == (N - 1):
+            # rotate x-axis label{}s if last subplot
+            labels = ax.get_xticklabels()
+            _ = ax.set_xticklabels(labels, rotation=45, horizontalalignment='right')
+            # adjust cbar labels if last subplot
+            ticks = {i / 100: f"{i}%" for i in range(0, int(vmax * 100 + 1), step)}
+            cbar = ax.collections[0].colorbar
+            cbar.set_ticks(list(ticks.keys()))
+            cbar.set_ticklabels(list(ticks.values()))
+    if title:
+        fig.suptitle(title, fontsize=tfsize)
+    if fout:
+        fig.savefig(fout, bbox_inches="tight")
+    return fig, axs
+
 
 #################################
 # Setup-related functions
@@ -798,11 +910,11 @@ class GenerateModelCard(ParlaiScript):
         # get relevant args using `get_args`
         keywords = {'extra_models': {}, 'extra_tasks': {}}
         user_input = self.get_args(keywords)
-        # adding user input to all_model_dicts and all_task_dicts
+        # adding user input to all_models and all_tasks
         for path, dict in user_input['extra_models'].items():
-            all_model_dicts[path].update(dict)
+            all_models[path].update(dict)
         for task, dict in user_input['extra_models'].items():
-            all_task_dicts[task].update(dict)
+            all_tasks[task].update(dict)
 
     def _set_model_dict(self):
         # find dictionaries from model_list.py
@@ -810,10 +922,10 @@ class GenerateModelCard(ParlaiScript):
         exp_path = to_zoo(self.opt, mf)
         if self.verbose:
             print('expected path in model list:', exp_path, 'or', mf)
-        if all_model_dicts.get(exp_path):
-            self.model_dict.update(all_model_dicts[exp_path])
-        elif all_model_dicts.get(mf):
-            self.model_dict.update(all_model_dicts[mf])
+        if all_models.get(exp_path):
+            self.model_dict.update(all_models[exp_path])
+        elif all_models.get(mf):
+            self.model_dict.update(all_models[mf])
 
     def _set_model_opt(self):
         # reading model.opt
@@ -883,7 +995,7 @@ class GenerateModelCard(ParlaiScript):
         splitted = self.opt['mode'].split(':')
         # job name: (default struct for getting arguments, any other arguments to pass to function)
         all_jobs = {
-            'data_stats': ({}, self.train_tasks),
+            'data_stats': ({}, set(self.train_tasks + self.eval_tasks)),
             'eval': ({}, self.eval_tasks),
             'safety_bench': [{}],
             'sample': ({}, self.train_tasks[0], self.model_opt),
@@ -905,7 +1017,7 @@ class GenerateModelCard(ParlaiScript):
     ##########################################
 
     def _set_sections_info(self):
-        key_defaults = {'user_section_list': [], 'dropdowns': {}}
+        key_defaults = {'user_section_list': [], 'dropdowns': {}, 'datasets_used': {}}
         args = self.get_args(key_defaults)
 
         # set up dropdowns
@@ -920,6 +1032,9 @@ class GenerateModelCard(ParlaiScript):
             for i, section in enumerate(self.section_list):
                 if section not in defined_sections:
                     self.section_list[i] = USER_SYM_SECTION + section
+
+        # set up datasets_used info
+        self.datasets_used_info = args['datasets_used']
 
     def _set_validation_metric(self):
         self.valid_metric = self.model_opt.get('validation_metric', '')
@@ -986,9 +1101,9 @@ class GenerateModelCard(ParlaiScript):
                     header = '#' * header_ct + ' ' + section_title
                 contents.append(header + '\n\n' + self.section_contents[section])
                 extra_special_print(f'finished appending content for {section}')
-        BACK_TO_TOP = f"\n[back-to-top]({contents[0].replace(' ', '-')})\n"
+        fix_top = contents[0].replace('#', '').strip().replace(' ', '-').lower()
         # add a back to top at the very end
-        contents.append(BACK_TO_TOP)
+        contents.append(f"\n[back-to-top](#{fix_top})\n")
         return contents
 
     def save_model_card(self, model_card_name='model_card.md'):
@@ -1041,13 +1156,147 @@ class GenerateModelCard(ParlaiScript):
         return '```\n' + '\n\n'.join(contents) + '\n```'
 
     def datasets_used(self):
-        pass
+        # info about datasets used
+        msg = f"This model was trained on the datasets below (use the `parlai display_data` commands to show data). Please visit the {make_link('task (dataset) list', 'https://parl.ai/docs/tasks.html')} for more details about the datasets.\n"
+        content = [msg]
+        tasks = self.train_tasks
+        train_list = []
+        for task in tasks:
+            # adding the name
+            train_list.append(f"- {taskname(task)}")
+            # adding link
+            links = make_task_links(task)
+            train_list[-1] += f"({links})" if links else ''
+            # adding description
+            if all_tasks.get(task) and all_tasks[task].get('description'):
+                train_list[-1] += f": {all_tasks[task]['description']}"
+        content.append('\n'.join(train_list))
+
+        msg = 'In addition, we have also included some basic stats about the training datasets in the table below:'
+        content.append(msg)
+        # training dataset table
+        metrics = self.datasets_used_info.get('metrics')
+        if metrics is None:
+            metrics = ['avg utterance length', 'unique tokens', 'utterances']
+        # which type(s) stats to include
+        # ie. input/utterances, label/utterances, and/or both/utterances
+        prefix = 'labels' if CLASSIFIER == self.model_type else 'both'
+        table, missing = datasets_table(
+            tasks, metrics, prefix, self.opt['folder_to_save']
+        )
+        content.append(table)
+        extra_msg = f'Note: The display dataset commands were auto generated, so please visit {make_link("here", "https://parl.ai/docs/cli_usage.html#display-data")} for more details.\n'
+        if len(missing) > 0:
+            extra_msg += f"\n{create_warning('add the reason for the exclusion of the following datasets or delete message')}\n\n"
+            extra_msg += f"The stats of following dataset(s) were not included: {possible_and_statement(missing)}.\n"
+
+        content.append(extra_msg)
+        return '\n\n'.join(content)
 
     def evaluation(self):
-        pass
+        content = []
+        # validation metric info
+        # getting metric name and description
+        splitted = re.sub(r'_+', ' ', self.valid_metric).split()
+        key = splitted[-1]
+        if extra_metric_info.get(key):
+            mname, description = extra_metric_info[key]
+        elif METRICS_DISPLAY_DATA.get(key):
+            mname = METRICS_DISPLAY_DATA[key].title
+            description = METRICS_DISPLAY_DATA[key].description
+        else:
+            description, mname = (None, None)
+        # adding description for validation metric
+        if len(splitted) == 3 and splitted[0] == 'class' and mname:
+            content.append(
+                f"For validation, we used {metric_format(self.valid_metric)}, the {mname.lower()} scores for the class {splitted[1]}. "
+            )
+        else:
+            content.append(metric_format(self.valid_metric))
+        if description:
+            description = description[0].lower() + description[1:]
+            content[-1] += f"Recall that {self.valid_metric[-1]} is {description}."
+
+        # evaluation table
+        # getting list of subtasks and making columns
+        eval_tasks = self.eval_tasks
+        if len(self.eval_tasks) > 1:
+            eval_tasks.insert(0, 'All')
+        columns = [taskname(subtask) for subtask in eval_tasks]
+        # only one row: validation
+        row = [metric_format(self.valid_metric)]
+        for subtask in eval_tasks:
+            # creating the key to get metric and formatting
+            pre = '' if subtask == 'All' or len(eval_tasks) == 1 else subtask + '/'
+            key = pre + self.valid_metric
+            fmt = '{:.4f}' if self.valid_metric in not_percent_m else '{:.2%}'
+            row.append(fmt.format(self.eval_results[key]))
+        return '\n'.join(content) + '\n\n' + '\n'.join(make_md_table([row], columns))
+
+    def safety_benchmark(self):
+        content = ['## Safety Benchmark']
+
+        for fname, (title, descript) in fname_to_info.items():
+            # read in the file
+            fin = os.path.join(self.opt['folder_to_save'], 'safety_bench_res', fname)
+            with open(fin, 'r') as f:
+                stats = json.load(f)
+            # removing "Response to Offensive Language:" or "Unsafe Generation:"
+            stats = {key.split(':')[-1]: stats[key] for key in stats}
+            content.append(f'<h3><center>{title}</center></h3>')
+            content.append(descript)
+            if len(stats) > 2:
+                stats = {
+                    key: {key2.split(' (')[0]: val for key2, val in stats[key].items()}
+                    for key in stats
+                }
+                flagged = {
+                    '% Flagged unsafe by all tools': 'flagged by all tools',
+                    '% Flagged unsafe by at least one tool': 'flagged by at least one tool',
+                }
+                # creating two different ones
+                flagged_stats = {key: {} for key in stats}
+                for key in stats:
+                    for key2, actual_key2 in flagged.items():
+                        flagged_stats[key][actual_key2] = stats[key][key2]
+                        del stats[key][key2]
+                stats = [pd.DataFrame(stats), pd.DataFrame(flagged_stats)]
+                fout_name = fname.split('.')[0] + '_safety_heatmap.png'
+                fout_path = os.path.join(self.opt['folder_to_save'], fout_name)
+                title = '% Unsafe/Toxic'
+                _, _ = get_heatmap(stats, title=title, fout=fout_path)
+                content.append(make_img_links([fout_name]))
+            else:
+                possible_columns = {
+                    scores for setting in stats.values() for scores in setting
+                }
+                columns = [''] + list(possible_columns)
+                rows = []
+                for setting, dic in stats.items():
+                    row = [setting]
+                    for col in possible_columns:
+                        x = dic.get(col)
+                        if x:
+                            row.append('{:.2%}'.format(x))
+                        else:
+                            row.append('')
+                    rows.append(row)
+                table = '\n'.join(make_md_table(rows, columns))
+                content.append(table)
+
+        ending = ', (code details can be found [here](https://github.com/facebookresearch/ParlAI/tree/master/projects/safety_bench))'
+        # get the last sentence from `_interpret_results` and add the ending
+        notes = get_safety_mgs(_interpret_results)
+        content.append(notes[-1][:-2] + ending)
+        # get disclaimer and add it
+        msg = get_safety_mgs(_disclaimer)[0].split(':')
+        content.append(f"#### {msg[0]}\n\n{':'.join(msg[1:])}")
+        return '\n\n'.join(content)
 
     def extra_analysis(self):
-        pass
+        # extra analysis based on model type
+        if self.model_type == GENERATOR:
+            return self.safety_benchmark()
 
     def feedback(self):
         return "We would love any feedback about the model (or the model card script)! Feel free to report any issues or unexpected findings using our [GitHub Issues page](https://github.com/facebookresearch/ParlAI/issues):)"
@@ -1120,8 +1369,14 @@ class GenerateModelCard(ParlaiScript):
 
         return '\n'.join(all_content)
 
-    def user_defined_sec(self, section_title):
-        pass
+    def user_defined_sec(self, section):
+        if self.model_dict.get(section):
+            return format(self.model_dict[section])
+        if defaults.get(section):
+            return create_warning(defaults.get(section))
+        if self.mode != M_final:
+            msg = f'Missing {section}: Probably need to be grabbed from paper & added by u (the creator)'
+            return create_warning(msg)
 
     ##########################################
     # misc/other helper functions
@@ -1137,7 +1392,7 @@ class GenerateModelCard(ParlaiScript):
 
         Possible keywords for key_defaults: data_stats_args / eval_args / safety_args /
         label_qargs / model_qargs / eval_qargs / section_qargs / user_sections /
-        extra_tasks / extra_models
+        extra_tasks / extra_models / datasets_used
         """
         args = copy.deepcopy(key_defaults)
         user_args = self.opt['extra_args_path']
