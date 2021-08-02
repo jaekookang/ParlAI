@@ -581,6 +581,7 @@ def setup_args(parser=None) -> ParlaiParser:
             type=str,
             default=None,
             choices=['ranker', 'generator', 'classifier', 'retriever'],
+            help='type of model',
         )
         parser.add_arg(
             '--folder-to-save',
