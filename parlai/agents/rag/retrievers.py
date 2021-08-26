@@ -15,6 +15,7 @@ from parlai.core.message import Message
 import torch
 import torch.cuda
 import torch.nn
+import transformers
 from tqdm import tqdm
 
 try:
@@ -36,6 +37,7 @@ from parlai.core.torch_ranker_agent import TorchRankerAgent
 import parlai.utils.logging as logging
 from parlai.utils.torch import padded_tensor
 from parlai.utils.typing import TShared
+from parlai.utils.io import PathManager
 
 from parlai.agents.rag.dpr import DprQueryEncoder
 from parlai.agents.rag.polyfaiss import RagDropoutPolyWrapper
@@ -225,8 +227,11 @@ class RagRetrieverTokenizer:
     Wrapper for various tokenizers used by RAG Query Model.
     """
 
+    VOCAB_PATH = 'vocab.txt'
+
     def __init__(
         self,
+        datapath: str,
         query_model: str,
         dictionary: DictionaryAgent,
         max_length: int = 256,
@@ -242,6 +247,7 @@ class RagRetrieverTokenizer:
         :param max_length:
             maximum length of encoding.
         """
+        self.datapath = datapath
         self.query_model = query_model
         self.tokenizer = self._init_tokenizer(dictionary)
         self.max_length = max_length
@@ -259,7 +265,13 @@ class RagRetrieverTokenizer:
             ParlAI dictionary agent
         """
         if self.query_model in ['bert', 'bert_from_parlai_rag']:
-            return BertTokenizer.from_pretrained('bert-base-uncased')
+            try:
+                return BertTokenizer.from_pretrained('bert-base-uncased')
+            except (ImportError, OSError):
+                vocab_path = PathManager.get_local_path(
+                    os.path.join(self.datapath, "bert_base_uncased", self.VOCAB_PATH)
+                )
+                return transformers.BertTokenizer.from_pretrained(vocab_path)
         else:
             return dictionary
 
@@ -371,6 +383,7 @@ class RagRetriever(torch.nn.Module, ABC):
         self.max_query_len = opt['rag_query_truncate'] or 1024
         self.end_idx = dictionary[dictionary.end_token]
         self._tokenizer = RagRetrieverTokenizer(
+            datapath=opt['datapath'],
             query_model=opt['query_model'],
             dictionary=dictionary,
             delimiter=opt.get('delimiter', '\n') or '\n',
@@ -641,12 +654,12 @@ class DPRRetriever(RagRetriever):
         # recompute exact FAISS scores
         scores = torch.bmm(query.unsqueeze(1), vectors.transpose(1, 2)).squeeze(1)
         if torch.isnan(scores).sum().item():
-            logging.error(
+            raise RuntimeError(
                 '\n[ Document scores are NaN; please look into the built index. ]\n'
+                '[ This generally happens if FAISS cannot separate vectors appropriately. ]\n'
                 '[ If using a compressed index, try building an exact index: ]\n'
                 '[ $ python index_dense_embeddings --indexer-type exact... ]'
             )
-            scores[scores != scores] = 1
         ids = torch.tensor([[int(s) for s in ss] for ss in ids])
 
         return ids, scores
@@ -830,7 +843,10 @@ class DPRThenTorchReranker(RagRetrieverReranker, DPRRetriever, ABC):
         logging.enable()
         assert isinstance(agent, TorchRankerAgent)
 
-        return agent.model, RagRetrieverTokenizer('', agent.dict, max_length=360)
+        return (
+            agent.model,
+            RagRetrieverTokenizer(opt['datapath'], '', agent.dict, max_length=360),
+        )
 
     def _retrieve_initial(
         self, query: torch.LongTensor
@@ -967,7 +983,7 @@ class PolyFaissRetriever(DPRThenPolyRetriever):
         self.polyencoder = self.dropout_poly.model
 
         self.poly_tokenizer = RagRetrieverTokenizer(
-            opt['query_model'], self.dropout_poly.dict, max_length=360
+            opt['datapath'], opt['query_model'], self.dropout_poly.dict, max_length=360
         )
 
         model = (
@@ -1136,7 +1152,7 @@ class SearchQuerySearchEngineRetriever(SearchQueryRetriever):
 
     def _empty_docs(self, num: int):
         """
-        Generates the requsted number of empty documents.
+        Generates the requested number of empty documents.
         """
         return [BLANK_SEARCH_DOC for _ in range(num)]
 
@@ -1230,9 +1246,9 @@ class SearchQueryFAISSIndexRetriever(SearchQueryRetriever, DPRRetriever):
         Retrieves from the FAISS index using a search query.
 
         This methods relies on the `retrieve_and_score` method in `RagRetriever`
-        ancestor class. It recieve the query (conversation context) and generatess the
+        ancestor class. It receive the query (conversation context) and generatess the
         search term queries based on them. Then uses those search quries (instead of the
-        the query text itself) to retrive from the FAISS index.
+        the query text itself) to retrieve from the FAISS index.
         """
 
         search_queries = self.generate_search_query(query)
@@ -1250,7 +1266,7 @@ class SearchQueryFAISSIndexRetriever(SearchQueryRetriever, DPRRetriever):
 
 class DocumentChunkRanker:
     """
-    Base class for controling splitting long documents and selecting relevant chunks.
+    Base class for controlling splitting long documents and selecting relevant chunks.
     """
 
     def __init__(self, n_retrieved_chunks):

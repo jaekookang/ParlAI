@@ -107,6 +107,9 @@ class BlenderBot2RagModel(RagModel):
         self.should_generate_query = (
             self.knowledge_access_method is KnowledgeAccessMethod.CLASSIFY
             or self.search
+        ) and (
+            self.knowledge_access_method
+            not in [KnowledgeAccessMethod.MEMORY_ONLY, KnowledgeAccessMethod.NONE]
         )
 
     def has_query_generator(self) -> bool:
@@ -381,6 +384,7 @@ class BlenderBot2RagModel(RagModel):
                 memory_decoder_vec,
                 generated_memories,
             )
+            logging.debug(f'Memory Access Complete: {time.time() - start:.2f}')
             if memories is not None and memory_scores is not None:
                 self._fill_docs_and_scores(
                     top_docs, doc_scores, memory_indices, memories, memory_scores
@@ -665,6 +669,7 @@ class LongTermMemory(RagRetriever):
             pretrained_path=opt['memory_writer_model_file'],
         ).eval()
         self._tokenizer = RagRetrieverTokenizer(
+            datapath=opt['datapath'],
             query_model=opt['query_model'],
             dictionary=dictionary,
             delimiter='\n',
@@ -856,7 +861,7 @@ class BB2SearchQuerySearchEngineRetriever(
     BB2SearchRetrieverMixin, SearchQuerySearchEngineRetriever
 ):
     """
-    Override Search Engine Retriever to accomodate SQ Generator from BB2 Setup.
+    Override Search Engine Retriever to accommodate SQ Generator from BB2 Setup.
     """
 
 
@@ -864,5 +869,5 @@ class BB2SearchQueryFaissIndexRetriever(
     BB2SearchRetrieverMixin, SearchQueryFAISSIndexRetriever
 ):
     """
-    Override Search Engine Retriever to accomodate SQ Generator from BB2 Setup.
+    Override Search Engine Retriever to accommodate SQ Generator from BB2 Setup.
     """

@@ -29,7 +29,7 @@ from parlai.core.message import Message
 from parlai.core.metrics import AverageMetric, normalize_answer, F1Metric
 from parlai.core.opt import Opt
 from parlai.core.params import ParlaiParser
-from parlai.core.torch_agent import History, Batch
+from parlai.core.torch_agent import History, Batch, Output
 from parlai.core.torch_generator_agent import PPLMetric, TorchGeneratorAgent, TreeSearch
 from parlai.utils.distributed import sync_parameters
 from parlai.utils.io import PathManager
@@ -184,14 +184,12 @@ class RagAgent(TransformerGeneratorRagAgent, BartRagAgent, T5RagAgent):
     def build_regret_model(self) -> RagModel:
         """
         Build and return regret RagModel.
-
-        Assume dictionary is the same.
         """
-        model_file = self.opt['regret_model_file']
+        model_file = modelzoo_path(self.opt['datapath'], self.opt['regret_model_file'])
         if model_file:
             assert os.path.exists(
                 model_file
-            ), 'specify correct path for --regret-model-file'
+            ), f'specify correct path for --regret-model-file (currently {model_file})'
             regret_opt = Opt.load(f'{model_file}.opt')
             regret_opt['n_docs'] = self.opt['n_docs']  # Urgent that this is the same
             # add keys that were not in this model when originally trained
@@ -210,10 +208,19 @@ class RagAgent(TransformerGeneratorRagAgent, BartRagAgent, T5RagAgent):
                 ]
             ):
                 logging.warning('Sharing retrievers between model and regret model!')
-                retriever_shared = self.model.encoder.retriever.share()
+                retriever_shared = self.model.retriever.share()
+            elif self.opt['regret_override_index']:
+                # Sharing Index Path & Passages only; not the full retriever
+                logging.warning('Overriding initial ReGReT model index')
+                regret_opt['path_to_index'] = self.opt['path_to_index']
+                regret_opt['path_to_dpr_passages'] = self.opt['path_to_dpr_passages']
 
-            model = RagModel(regret_opt, self.dict, retriever_shared=retriever_shared)
-            with PathManager.open(self.opt['regret_model_file'], 'rb') as f:
+            if self.opt['regret_dict_file']:
+                regret_opt['dict_file'] = self.opt['regret_dict_file']
+
+            regret_dict = self.dictionary_class()(regret_opt)
+            model = RagModel(regret_opt, regret_dict, retriever_shared=retriever_shared)
+            with PathManager.open(model_file, 'rb') as f:
                 states = torch.load(
                     f,
                     map_location=lambda cpu, _: cpu,
@@ -224,15 +231,15 @@ class RagAgent(TransformerGeneratorRagAgent, BartRagAgent, T5RagAgent):
             if self.model_parallel:
                 ph = PipelineHelper()
                 ph.check_compatibility(self.opt)
-                self.regret_model = ph.make_parallel(self.regret_model)
-            else:
-                self.regret_model.cuda()
+                model = ph.make_parallel(model)
+            elif self.use_cuda:
+                model.cuda()
             if self.fp16:
-                self.regret_model = self.regret_model.half()
+                model = model.half()
 
-            sync_parameters(self.regret_model)
-            train_params = trainable_parameters(self.regret_model)
-            total_params = total_parameters(self.regret_model)
+            sync_parameters(model)
+            train_params = trainable_parameters(model)
+            total_params = total_parameters(model)
             logging.info(
                 f"Total regret parameters: {total_params:,d} ({train_params:,d} trainable)"
             )
@@ -278,6 +285,15 @@ class RagAgent(TransformerGeneratorRagAgent, BartRagAgent, T5RagAgent):
         if 'input_turn_cnt_vec' not in observation:
             self._set_input_turn_cnt_vec(observation)
         return observation
+
+    def eval_step(self, batch: Batch) -> Optional[Output]:
+        output = super().eval_step(batch)
+        if output is None or not hasattr(self.model, 'retriever'):
+            return output
+        assert isinstance(self.model, RagModel)
+        if hasattr(self.model.retriever, 'top_docs'):
+            output.top_docs = self.model.retriever.top_docs  # type: ignore
+        return output
 
     ###### 1. Model Inputs ######
 
@@ -664,7 +680,7 @@ class RagAgent(TransformerGeneratorRagAgent, BartRagAgent, T5RagAgent):
         n_best_beam_preds_scores: List[List[Tuple[torch.LongTensor, torch.Tensor]]],
     ) -> List[List[Tuple[torch.LongTensor, torch.Tensor]]]:
         """
-        Optionall rerank beams, according to RAG Model type.
+        Optional rerank beams, according to RAG Model type.
 
         :param batch:
             current batch
