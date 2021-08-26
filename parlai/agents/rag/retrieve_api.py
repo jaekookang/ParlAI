@@ -80,6 +80,12 @@ class SearchEngineRetriever(RetrieverAPI):
 
     def __init__(self, opt: Opt):
         super().__init__(opt=opt)
+        
+        # 2021-08-11: Jaekoo Kang added the following line 
+        #             because config.yml didn't seem to read the search_server keyword
+        # opt['search_server'] = '0.0.0.0:10002'
+        print(f'----------SEARCH_SERVER: {opt.get("search_server")}')
+
         self.server_address = self._validate_server(opt.get('search_server'))
 
     def _query_search_server(self, query_term, n):

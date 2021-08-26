@@ -13,7 +13,7 @@ opt:
   models:
     blenderbot:
       model: transformer/generator
-      model_file: zoo:blender/blender_90M/model
+      model_file: zoo:msc/blender3B_1024/model
       interactive_mode: True
       no_cuda: True
 additional_args:
