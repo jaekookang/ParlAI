@@ -51,7 +51,5 @@ if __name__ == '__main__':
     config = config_utils.parse_configuration_file(config_path)
     opt.update(config['world_opt'])
     opt['config'] = config
-    
-    # Add search server for BlenderBot2 (2021-08-11)
-    # opt['search_server'] = '0.0.0.0:10002'  # => no more needed
+
     run(opt)

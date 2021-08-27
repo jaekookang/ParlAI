@@ -3,6 +3,9 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
+
+# 2021-08-27 jkang edited: at `WEB_HTML`, `display: contents` added to widen typing text input area
+
 """
 Talk with a model using a web UI.
 
@@ -40,7 +43,7 @@ WEB_HTML = """
         <div class="columns" style="height: 100%">
             <div class="column is-three-fifths is-offset-one-fifth">
               <section class="hero is-info is-large has-background-light has-text-grey-dark" style="height: 100%">
-                <div id="parent" class="hero-body" style="overflow: auto; height: calc(100% - 76px); padding-top: 1em; padding-bottom: 0;">
+                <div id="parent" class="hero-body" style="overflow: auto; height: calc(100% - 76px); padding-top: 1em; padding-bottom: 0; ">
                     <article class="media">
                       <div class="media-content">
                         <div class="content">
@@ -53,7 +56,7 @@ WEB_HTML = """
                       </div>
                     </article>
                 </div>
-                <div class="hero-foot column is-three-fifths is-offset-one-fifth" style="height: 76px">
+                <div class="hero-foot column is-three-fifths is-offset-one-fifth" style="height: 76px; display: contents;">
                   <form id = "interact">
                       <div class="field is-grouped">
                         <p class="control is-expanded">
