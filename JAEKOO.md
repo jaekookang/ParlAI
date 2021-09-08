@@ -60,7 +60,7 @@
 - blenderbot2 400M (without web search)
     ```bash
     # Activate chat server
-    python parlai/chat_service/services/browser_chat/run.py --config-path parlai/chat_service/tasks/chatbot/config_blenderbot2_400M_noweb.yml --port 10003 --knowledge-access-method memory_only
+    python parlai/chat_service/services/browser_chat/run.py --config-path parlai/chat_service/tasks/chatbot/config_blenderbot2_400M_noweb.yml --port 10003
     # Activate client server (with search server)
     python parlai/chat_service/services/browser_chat/client.py --port 10003 --serving_port 6024 --host 0.0.0.0
     # Connect to the port locally

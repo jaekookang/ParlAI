@@ -17,6 +17,7 @@ opt:
       interactive_mode: True
       no_cuda: True
       override:
-          search_server: None 
+          knowledge_access_method: memory_only
+          search_server: None
 additional_args:
   page_id: 1 # Configure Your Own Page
