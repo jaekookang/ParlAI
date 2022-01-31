@@ -36,6 +36,7 @@ STYLE_SHEET = "https://cdnjs.cloudflare.com/ajax/libs/bulma/0.7.4/css/bulma.css"
 FONT_AWESOME = "https://use.fontawesome.com/releases/v5.3.1/js/all.js"
 WEB_HTML = """
 <html>
+    <meta charset="utf-8">
     <link rel="stylesheet" href={} />
     <script defer src={}></script>
     <head><title> Interactive Run </title></head>
@@ -48,9 +49,9 @@ WEB_HTML = """
                       <div class="media-content">
                         <div class="content">
                           <p>
-                            <strong>Instructions</strong>
+                            <strong>사용 방법</strong>
                             <br>
-                            Enter a message, and the model will respond interactively.
+                            영어로 말을 걸면, 챗봇이 바로 대답을 합니다 🤖
                           </p>
                         </div>
                       </div>
@@ -64,12 +65,12 @@ WEB_HTML = """
                         </p>
                         <p class="control">
                           <button id="respond" type="submit" class="button has-text-white-ter has-background-grey-dark">
-                            Submit
+                            입력
                           </button>
                         </p>
                         <p class="control">
                           <button id="restart" type="reset" class="button has-text-white-ter has-background-grey-dark">
-                            Restart Conversation
+                            대화 다시 시작하기
                           </button>
                         </p>
                       </div>
@@ -80,7 +81,18 @@ WEB_HTML = """
         </div>
 
         <script>
+            // Add speech synthesizer
+            let speech = new SpeechSynthesisUtterance();
+            speech.lang = "en";
+            // Get the list of voices
+            voices = window.speechSynthesis.getVoices();
+            // Initially set the First Voice in the Array
+            speech.voice = voices[2];  // "Alex"; TODO: Add more voices
+
             function createChatRow(agent, text) {{
+                let agent_you = "당신";
+                let agent_bot = "키블봇";
+
                 var article = document.createElement("article");
                 article.className = "media"
 
@@ -103,7 +115,11 @@ WEB_HTML = """
                 var paraText = document.createTextNode(text);
 
                 var strong = document.createElement("strong");
-                strong.innerHTML = agent;
+                if (agent === "You")
+                    strong.innerHTML = agent_you;
+                if (agent === "Model")
+                    strong.innerHTML = agent_bot;
+                // strong.innerHTML = agent;
                 var br = document.createElement("br");
 
                 para.appendChild(strong);
@@ -140,8 +156,15 @@ WEB_HTML = """
                     parDiv.append(createChatRow("You", text));
 
                     // Change info for Model response
-                    parDiv.append(createChatRow("Model", data.text));
+                    // remove " _POTENTIALLY_UNSAFE__"
+                    let rmText = " _POTENTIALLY_UNSAFE__"
+                    parDiv.append(createChatRow("Model", data.text.replace(rmText, "")));
                     parDiv.scrollTo(0, parDiv.scrollHeight);
+                    console.log("bot response:" + data.text);
+
+                    // Read out loud
+                    speech.text = data.text;
+                    window.speechSynthesis.speak(speech);
                 }})
             }});
             document.getElementById("interact").addEventListener("reset", function(event){{

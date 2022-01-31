@@ -7,7 +7,7 @@ tasks:
 task_name: chatbot
 world_module: parlai.chat_service.tasks.chatbot.worlds
 overworld: MessengerOverworld
-max_workers: 30
+max_workers: 3
 opt:
   debug: True
   models:
